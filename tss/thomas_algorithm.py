@@ -1,24 +1,61 @@
-from typing import List
+from typing import List, Tuple
+import logging
 
 import matplotlib.pyplot as plt
 import numpy as np
 
+logger = logging.getLogger(__name__)
+
 
 class TridiagonalSolver:
-    """Class for solving tridiagonal systems using the Thomas algorithm"""
+    """Class for solving tridiagonal systems using the Thomas algorithm with flexible configuration"""
 
     def __init__(
         self,
-        a: List[float],  # lower diagonal (indices 0..n-2)
-        b: List[float],  # main diagonal (indices 0..n-1)
-        c: List[float],  # upper diagonal (indices 0..n-2)
-        d: List[float],  # right-hand side (indices 0..n-1)
+        a: List[float] = None,
+        b: List[float] = None,
+        c: List[float] = None,
+        d: List[float] = None,
     ):
-        self.a = np.array(a, dtype=float)
-        self.b = np.array(b, dtype=float)
-        self.c = np.array(c, dtype=float)
-        self.d = np.array(d, dtype=float)
-        self.n = len(b)
+        if a is not None and b is not None and c is not None and d is not None:
+            self.set_system(a, b, c, d)
+        else:
+            self.a = None
+            self.b = None
+            self.c = None
+            self.d = None
+            self.n = 0
+
+    def set_system(self, a: List[float], b: List[float], c: List[float], d: List[float]):
+        """Set or update the tridiagonal system with validation.
+
+        Args:
+            a: Lower diagonal coefficients (n-1 elements)
+            b: Main diagonal coefficients (n elements)
+            c: Upper diagonal coefficients (n-1 elements)
+            d: Right-hand side vector (n elements)
+
+        Raises:
+            ValueError: If input lists have incompatible lengths or contain non-numeric values.
+        """
+        if not all(isinstance(lst, (list, tuple, np.ndarray)) for lst in [a, b, c, d]):
+            raise ValueError("All inputs must be lists, tuples, or numpy arrays")
+        
+        n = len(b)
+        if len(a) != n - 1 or len(c) != n - 1 or len(d) != n:
+            raise ValueError(f"Incompatible dimensions: a should have {n-1} elements, c should have {n-1}, d should have {n}")
+        
+        try:
+            self.a = np.array(a, dtype=float)
+            self.b = np.array(b, dtype=float)
+            self.c = np.array(c, dtype=float)
+            self.d = np.array(d, dtype=float)
+        except (ValueError, TypeError) as e:
+            logger.error(f"Failed to convert inputs to float arrays: {e}")
+            raise ValueError(f"Non-numeric values in input: {e}")
+        
+        self.n = n
+        logger.info(f"Tridiagonal system set with {n} equations")
 
         # Validate dimensions
         if len(a) != self.n - 1 or len(c) != self.n - 1 or len(d) != self.n:
@@ -26,27 +63,25 @@ class TridiagonalSolver:
 
     def solve(self) -> np.ndarray:
         """Thomas algorithm (tridiagonal matrix algorithm)"""
-        # Forward sweep
+        if self.a is None:
+            raise ValueError("System not set. Use set_system() first.")
+
         alpha = np.zeros(self.n)
         beta = np.zeros(self.n)
 
-        # Initial coefficients
         alpha[0] = -self.c[0] / self.b[0]
         beta[0] = self.d[0] / self.b[0]
 
-        # forward coefficients
         for i in range(1, self.n - 1):
             denominator = self.b[i] + self.a[i - 1] * alpha[i - 1]
             alpha[i] = -self.c[i] / denominator
             beta[i] = (self.d[i] - self.a[i - 1] * beta[i - 1]) / denominator
 
-        # Last beta coefficient
         denominator = self.b[self.n - 1] + self.a[self.n - 2] * alpha[self.n - 2]
         beta[self.n - 1] = (
             self.d[self.n - 1] - self.a[self.n - 2] * beta[self.n - 2]
         ) / denominator
 
-        # Backward substitution
         x = np.zeros(self.n)
         x[self.n - 1] = beta[self.n - 1]
 
@@ -55,8 +90,11 @@ class TridiagonalSolver:
 
         return x
 
-    def residual(self, x: np.ndarray) -> np.ndarray:
+    def residual(self, x: np.ndarray = None) -> np.ndarray:
         """Compute residual vector"""
+        if x is None:
+            x = self.solve()
+
         residual_vec = np.zeros(self.n)
 
         residual_vec[0] = self.b[0] * x[0] + self.c[0] * x[1] - self.d[0]
@@ -77,58 +115,101 @@ class TridiagonalSolver:
 
         return residual_vec
 
+    def get_matrix_condition(self) -> float:
+        """Estimate condition number of the tridiagonal matrix"""
+        if self.a is None:
+            return float('inf')
 
-def plot_solution(
-    x: np.ndarray, residuals: np.ndarray, solution_method: str = "Thomas Algorithm"
-):
-    """Visualize solution and residuals"""
+        dominant = True
+        for i in range(self.n):
+            row_sum = abs(self.b[i])
+            if i > 0:
+                row_sum += abs(self.a[i-1])
+            if i < self.n - 1:
+                row_sum += abs(self.c[i])
+            if abs(self.b[i]) < row_sum - abs(self.b[i]):
+                dominant = False
+                break
 
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
+        if dominant:
+            return 1.0
+        else:
+            return float('inf')
 
-    # 1. Solution plot
-    ax1.plot(x, "o-", linewidth=2, markersize=8, color="royalblue")
-    ax1.set_xlabel("Index i", fontsize=12)
-    ax1.set_ylabel("Value x[i]", fontsize=12)
-    ax1.set_title("System Solution", fontsize=14, fontweight="bold")
-    ax1.grid(True, alpha=0.3)
-    ax1.axhline(y=0, color="black", linestyle="-", linewidth=0.5)
+    def plot_solution(self, x: np.ndarray = None, residuals: np.ndarray = None,
+                     solution_method: str = "Алгоритм Томаса",
+                     figsize: Tuple[int, int] = (12, 5), show_plot: bool = True):
+        """Visualize solution and residuals"""
+        if x is None:
+            x = self.solve()
+        if residuals is None:
+            residuals = self.residual(x)
 
-    # 2. Residuals plot
-    ax2.bar(
-        range(len(residuals)),
-        residuals,
-        color="lightcoral",
-        edgecolor="darkred",
-        alpha=0.7,
-    )
-    ax2.set_xlabel("Equation Index", fontsize=12)
-    ax2.set_ylabel("Residual", fontsize=12)
-    ax2.set_title("Solution Residuals", fontsize=14, fontweight="bold")
-    ax2.grid(True, alpha=0.3, axis="y")
-    ax2.axhline(y=0, color="black", linestyle="-", linewidth=0.5)
+        if not show_plot:
+            return x, residuals
 
-    plt.suptitle(
-        f"Linear System Solution: {solution_method}", fontsize=16, fontweight="bold"
-    )
-    plt.tight_layout()
-    plt.show()
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=figsize, facecolor='white')
+
+        # 1. Solution plot
+        ax1.plot(x, "o-", linewidth=2.5, markersize=8, color="#1f77b4", markerfacecolor="#ff7f0e", markeredgecolor="black", markeredgewidth=1.5)
+        ax1.set_xlabel("Индекс i", fontsize=14, fontweight='bold')
+        ax1.set_ylabel("Значение x[i]", fontsize=14, fontweight='bold')
+        ax1.set_title("Решение системы", fontsize=16, fontweight="bold", color='#333333')
+        ax1.grid(True, alpha=0.4, linestyle='--')
+        ax1.axhline(y=0, color="black", linestyle="-", linewidth=0.8)
+
+        # 2. Residuals plot
+        ax2.bar(
+            range(len(residuals)),
+            residuals,
+            color="#d62728",
+            edgecolor="black",
+            alpha=0.8,
+            width=0.8
+        )
+        ax2.set_xlabel("Индекс уравнения", fontsize=14, fontweight='bold')
+        ax2.set_ylabel("Невязка", fontsize=14, fontweight='bold')
+        ax2.set_title("Невязки решения", fontsize=16, fontweight="bold", color='#333333')
+        ax2.grid(True, alpha=0.4, linestyle='--', axis="y")
+        ax2.axhline(y=0, color="black", linestyle="-", linewidth=0.8)
+
+        plt.suptitle(
+            f"Решение линейной системы: {solution_method}", fontsize=18, fontweight="bold", color='#333333'
+        )
+        plt.tight_layout()
+        plt.show()
+
+        return x, residuals
+
+    def generate_random_system(self, n: int, diagonal_range: Tuple[float, float] = (1.0, 10.0),
+                              off_diagonal_range: Tuple[float, float] = (-2.0, 2.0),
+                              rhs_range: Tuple[float, float] = (-10.0, 10.0)) -> Tuple[List[float], List[float], List[float], List[float]]:
+        """Generate a random tridiagonal system for testing"""
+        np.random.seed(42)  # For reproducibility
+
+        a = [np.random.uniform(*off_diagonal_range) for _ in range(n-1)]
+        b = [np.random.uniform(*diagonal_range) for _ in range(n)]
+        c = [np.random.uniform(*off_diagonal_range) for _ in range(n-1)]
+        d = [np.random.uniform(*rhs_range) for _ in range(n)]
+
+        return a, b, c, d
 
 
-def solve_variable_coefficients_system():
-    """Solve a 10×10 system with variable coefficients"""
+def solve_variable_coefficients_system(n: int = 10, plot: bool = True):
+    """Solve a system with variable coefficients"""
 
     print("\n" + "=" * 60)
-    print("Variable Coefficients System (10×10)")
+    print(f"Variable Coefficients System ({n}×{n})")
     print("=" * 60)
 
-    n = 10
+    solver = TridiagonalSolver()
 
     a = [1.5] * (n - 1)  # lower diagonal
     b = [4.0 + 0.1 * i for i in range(n)]  # main diagonal
     c = [2.0] * (n - 1)  # upper diagonal
     d = [10.0 + i for i in range(n)]  # right-hand side
 
-    solver = TridiagonalSolver(a, b, c, d)
+    solver.set_system(a, b, c, d)
 
     print("\nSystem coefficients:")
     print(f"Lower diagonal a: {a}")
@@ -149,36 +230,7 @@ def solve_variable_coefficients_system():
     print(f"  Maximum residual: {np.max(np.abs(residuals)):.2e}")
     print(f"  Mean residual: {np.mean(np.abs(residuals)):.2e}")
 
-    plt.figure(figsize=(10, 6))
+    if plot:
+        solver.plot_solution(solution, residuals, f"Алгоритм Томаса ({n}×{n})")
 
-    plt.plot(
-        solution,
-        "o-",
-        linewidth=2,
-        markersize=8,
-        color="royalblue",
-        label="Solution x[i]",
-    )
-
-    plt.errorbar(
-        range(n),
-        solution,
-        yerr=np.abs(residuals) / 10,
-        fmt="none",
-        ecolor="red",
-        alpha=0.5,
-        capsize=3,
-        label="Residuals (scaled)",
-    )
-
-    plt.xlabel("Index i", fontsize=12)
-    plt.ylabel("Value", fontsize=12)
-    plt.title(
-        "Solution of 10×10 Tridiagonal System\nwith Variable Coefficients",
-        fontsize=14,
-        fontweight="bold",
-    )
-    plt.grid(True, alpha=0.3)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
+    return solution, residuals

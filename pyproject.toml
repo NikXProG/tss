@@ -7,8 +7,8 @@ find = {}
 
 [project]
 name = "tss"
-version = "0.1.0"
-description = "A Python package for solving tridiagonal systems using the Thomas algorithm"
+version = "0.2.0"
+description = "A comprehensive Python package for numerical methods: Thomas algorithm, BVP solvers, ODE systems, and more"
 authors = [
     {name = "Your Name", email = "your.email@example.com"},
 ]
